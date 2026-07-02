@@ -36,8 +36,8 @@ export class RCONManager {
             console.log('RCON connection established!');
         } catch (err: any) {
             console.error('Failed to connect to RCON:', err.message);
-            this.handleDisconnect('Initial connection failed');
-            throw err;
+            this.isConnected = false;
+            this.scheduleReconnect();
         }
     }
 
@@ -62,12 +62,8 @@ export class RCONManager {
         this.isReconnecting = true;
 
         setTimeout(async () => {
-            try {
-                await this.connect();
-            } catch {
-                this.isReconnecting = false;
-                this.scheduleReconnect();
-            }
+            this.isReconnecting = false;
+            await this.connect();
         }, 5000);
     }
 }
