@@ -41,6 +41,16 @@ export class RCONManager {
         }
     }
 
+    async forceReconnect(): Promise<void> {
+        if (this.client) {
+            try { await this.client.disconnect(); } catch { /* already closed */ }
+            this.client = null;
+        }
+        this.isConnected = false;
+        this.isReconnecting = false;
+        await this.connect();
+    }
+
     async sendCommand(command: string): Promise<string> {
         if (!this.isConnected || !this.client) {
             throw new Error('RCON is currently disconnected. Please try again in a moment.');

@@ -17,6 +17,7 @@ export default {
 
         const { sftpManager, rconManager } = interaction.client as MyClient;
         await sftpManager.addToWhitelist(player);
+        await rconManager.forceReconnect();
         await rconManager.sendCommand('whitelist reload');
 
         await interaction.editReply({ content: `Am dat whitelist lui ${player}.` });
