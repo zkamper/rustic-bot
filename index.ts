@@ -1,7 +1,8 @@
-import { BaseInteraction, ChatInputCommandInteraction, Client, Collection, Events, GatewayIntentBits, MessageFlags, SlashCommandBuilder, type SlashCommandOptionsOnlyBuilder } from "discord.js";
+import { BaseInteraction, ChatInputCommandInteraction, Client, Collection, EmbedBuilder, Events, GatewayIntentBits, MessageFlags, SlashCommandBuilder, type SlashCommandOptionsOnlyBuilder } from "discord.js";
 import SftpClient from "ssh2-sftp-client";
 import { SFTPManager } from "./src/sftp";
 import { RCONManager } from "./src/rcon";
+import { ServerStatusMonitor, type ServerStatusSnapshot } from "./src/serverStatus";
 import { loadCommands } from "./src/utils";
 
 export interface Command {
@@ -13,6 +14,7 @@ export class MyClient extends Client {
     commands: Collection<string, Command> = new Collection();
     sftpManager!: SFTPManager;
     rconManager!: RCONManager;
+    statusMonitor?: ServerStatusMonitor;
 }
 const client = new MyClient({intents: [GatewayIntentBits.Guilds]})
 
@@ -29,10 +31,23 @@ client.once(Events.ClientReady, async (readyClient) => {
     }
 
     client.sftpManager = new SFTPManager(config);
-    await client.sftpManager.connect();
-
     client.rconManager = new RCONManager();
-    await client.rconManager.connect();
+
+    await Promise.all([
+        client.sftpManager.connect(),
+        client.rconManager.connect(),
+    ]);
+
+    const intervalMs = readPositiveNumber('STATUS_CHECK_INTERVAL_SECONDS', 30) * 1000;
+    const timeoutMs = readPositiveNumber('STATUS_CHECK_TIMEOUT_MS', 5000);
+
+    client.statusMonitor = new ServerStatusMonitor(
+        client.rconManager,
+        announceStoppedServer,
+        intervalMs,
+        timeoutMs,
+    );
+    await client.statusMonitor.start();
 })
 
 client.on(Events.InteractionCreate, async (interaction: BaseInteraction) => {
@@ -61,3 +76,32 @@ client.on(Events.InteractionCreate, async (interaction: BaseInteraction) => {
 })
 
 client.login(process.env.APP_TOKEN)
+
+function readPositiveNumber(name: string, fallback: number): number {
+    const value = Number(process.env[name]);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+async function announceStoppedServer(current: ServerStatusSnapshot): Promise<void> {
+    if (current.status !== 'stopped') return;
+
+    const channelId = process.env.STATUS_CHANNEL_ID;
+    if (!channelId) {
+        console.warn('The server stopped, but STATUS_CHANNEL_ID is not configured.');
+        return;
+    }
+
+    const channel = await client.channels.fetch(channelId);
+    if (!channel?.isSendable()) {
+        console.error(`STATUS_CHANNEL_ID (${channelId}) is not a text channel the bot can access.`);
+        return;
+    }
+
+    const embed = new EmbedBuilder()
+        .setColor(0xED4245)
+        .setTitle('🔴 Minecraft server is offline')
+        .setDescription('The server stopped responding to health checks. It may have stopped or crashed.')
+        .setTimestamp(current.checkedAt);
+
+    await channel.send({ embeds: [embed] });
+}
